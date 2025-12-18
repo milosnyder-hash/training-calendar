@@ -3,6 +3,13 @@
 import { useEffect, useState } from "react";
 import { generatePlan } from "@/lib/training/generatePlan";
 import { validatePlan } from "@/lib/training/validatePlan";
+import type { PlanDay, Workout, WorkoutType } from "@/lib/training/types";
+import {
+  isPelotonWorkout,
+  isRunWorkout,
+  pelotonLoadEq,
+} from "@/lib/training/types";
+import type { PlanValidation } from "@/lib/training/validatePlan";
 
 const RACE_DATE = "2026-05-24";
 
@@ -16,7 +23,7 @@ function todayYYYYMMDD() {
 
 /* ---------- UI helpers ---------- */
 
-const WORKOUT_COLORS: Record<string, string> = {
+const WORKOUT_COLORS = {
   RUN_EASY: "#d1fae5",
   RUN_QUALITY_T: "#fde68a",
   RUN_QUALITY_I: "#fca5a5",
@@ -26,9 +33,9 @@ const WORKOUT_COLORS: Record<string, string> = {
   PELOTON_QUALITY_I: "#7dd3fc",
   STRENGTH: "#e9d5ff",
   REST: "#e5e7eb",
-};
+} satisfies Record<WorkoutType, string>;
 
-function WorkoutPill({ type }: { type: string }) {
+function WorkoutPill({ type }: { type: WorkoutType }) {
   return (
     <span
       style={{
@@ -43,21 +50,21 @@ function WorkoutPill({ type }: { type: string }) {
       {type}
     </span>
   );
-}function WorkoutDetails({ workout }: { workout: any }) {
+}
+
+function WorkoutDetails({ workout }: { workout: Workout }) {
   const segments = Array.isArray(workout.segments) ? workout.segments : [];
 
   // total run miles (safe)
-  const totalRunMiles = segments.reduce(
-    (sum: number, s: any) =>
-      sum + (Number.isFinite(s.distanceMi) ? s.distanceMi : 0),
-    0
-  );
+  const totalRunMiles = segments.reduce((sum, s) => {
+    if (!Number.isFinite(s.distanceMi)) return sum;
+    return sum + s.distanceMi;
+  }, 0);
 
   // peloton miles-equivalent
-  let pelotonEq: number | null = null;
-  if (workout.type === "PELOTON_EASY") pelotonEq = 2.5;
-  if (workout.type === "PELOTON_QUALITY_T") pelotonEq = 4.5;
-  if (workout.type === "PELOTON_QUALITY_I") pelotonEq = 5.5;
+  const pelotonEq = isPelotonWorkout(workout.type)
+    ? pelotonLoadEq(workout.type)
+    : null;
 
   // nothing to show
   if (segments.length === 0 && pelotonEq === null) return null;
@@ -65,7 +72,7 @@ function WorkoutPill({ type }: { type: string }) {
   return (
     <div>
       {/* Run total */}
-      {workout.type.startsWith("RUN_") && totalRunMiles > 0 && (
+      {isRunWorkout(workout.type) && totalRunMiles > 0 && (
         <div style={{ fontWeight: 600, marginBottom: 4 }}>
           Total: {totalRunMiles.toFixed(1)} mi
         </div>
@@ -81,7 +88,7 @@ function WorkoutPill({ type }: { type: string }) {
       {/* Segment breakdown */}
       {segments.length > 0 && (
         <ul style={{ paddingLeft: 16, margin: 0 }}>
-          {segments.map((s: any, idx: number) => (
+          {segments.map((s, idx) => (
             <li key={idx} style={{ lineHeight: 1.4 }}>
               {s.label}
               {Number.isFinite(s.distanceMi) && ` — ${s.distanceMi} mi`}
@@ -108,8 +115,8 @@ export default function PlanPage() {
   const [targetPeak10DayLoad, setTargetPeak10DayLoad] = useState(55); // mi-eq
 
   const [error, setError] = useState<string | null>(null);
-  const [plan, setPlan] = useState<any[] | null>(null);
-  const [validation, setValidation] = useState<any | null>(null);
+  const [plan, setPlan] = useState<PlanDay[] | null>(null);
+  const [validation, setValidation] = useState<PlanValidation | null>(null);
   const [hasWorkdays, setHasWorkdays] = useState(false);
 
   useEffect(() => {
@@ -296,7 +303,7 @@ export default function PlanPage() {
                 </tr>
               </thead>
               <tbody>
-                {plan.map((d: any, idx: number) => (
+                {plan.map((d, idx) => (
                   <tr key={d.date} style={{ borderBottom: "1px solid #eee" }}>
                     <td style={{ padding: 8 }}>{d.date}</td>
                     <td style={{ padding: 8 }}>{d.isWorkday ? "Yes" : ""}</td>

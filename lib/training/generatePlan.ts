@@ -1,31 +1,10 @@
 import { addDays, differenceInDays } from "date-fns";
-
-type WorkoutType =
-  | "RUN_EASY"
-  | "RUN_QUALITY_T"
-  | "RUN_QUALITY_I"
-  | "RUN_QUALITY_LONG"
-  | "PELOTON_EASY"
-  | "PELOTON_QUALITY_T"
-  | "STRENGTH"
-  | "REST";
-
-interface Segment {
-  label: string;
-  distanceMi?: number;
-  pace?: string;
-}
-
-interface DayPlan {
-  date: string;
-  isWorkday: boolean;
-  phase: "BASE" | "BUILD" | "PEAK" | "TAPER";
-  workout: {
-    type: WorkoutType;
-    segments?: Segment[];
-    loadEq?: number;
-  };
-}
+import {
+  PlanDay,
+  Segment,
+  WorkoutType,
+  pelotonLoadEq,
+} from "./types";
 
 interface GeneratePlanArgs {
   startDate: string;
@@ -53,14 +32,6 @@ function getPhase(date: Date, start: Date, race: Date): DayPlan["phase"] {
   return "TAPER";
 }
 
-function isQuality(type: WorkoutType) {
-  return (
-    type === "RUN_QUALITY_LONG" ||
-    type === "RUN_QUALITY_T" ||
-    type === "RUN_QUALITY_I"
-  );
-}
-
 /* ---------------- main ---------------- */
 
 export function generatePlan({
@@ -69,7 +40,7 @@ export function generatePlan({
   workdayMap,
   starting10DayLoad,
   targetPeak10DayLoad,
-}: GeneratePlanArgs): DayPlan[] {
+}: GeneratePlanArgs): PlanDay[] {
   const start = new Date(startDate);
   const race = new Date(raceDate);
 
@@ -78,7 +49,7 @@ export function generatePlan({
     days.push(new Date(d));
   }
 
-  const plan: DayPlan[] = [];
+  const plan: PlanDay[] = [];
 
   // rolling load buffer (10-day)
   const loadHistory: number[] = [];
@@ -121,10 +92,10 @@ export function generatePlan({
     if (isWorkday) {
       if (qualityCountThisWeek < 2 && daysToRace > 5) {
         workoutType = "PELOTON_QUALITY_T";
-        loadEq = 4.5;
+        loadEq = pelotonLoadEq("PELOTON_QUALITY_T");
       } else {
         workoutType = "PELOTON_EASY";
-        loadEq = 2.5;
+        loadEq = pelotonLoadEq("PELOTON_EASY");
       }
 
       if (dayOfWeek === 2 || dayOfWeek === 4) {

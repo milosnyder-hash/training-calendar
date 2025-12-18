@@ -1,14 +1,21 @@
-import { PlanDay } from "./generatePlan";
+import {
+  PlanDay,
+  Workout,
+  WorkoutType,
+  isPelotonWorkout,
+  isRunWorkout,
+  pelotonLoadEq,
+} from "./types";
 
 /* ---------- helpers ---------- */
 
-function safeNum(v: any): number {
+function safeNum(v: unknown): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 }
 
-function runMilesFromWorkout(workout: any): number {
-  if (!workout?.type?.startsWith("RUN_")) return 0;
+function runMilesFromWorkout(workout: Workout): number {
+  if (!isRunWorkout(workout.type)) return 0;
   if (!Array.isArray(workout.segments)) return 0;
 
   return workout.segments.reduce(
@@ -17,32 +24,30 @@ function runMilesFromWorkout(workout: any): number {
   );
 }
 
-function pelotonEqFromType(type: string): number {
-  switch (type) {
-    case "PELOTON_EASY":
-      return 2.5;
-    case "PELOTON_QUALITY_T":
-      return 4.5;
-    case "PELOTON_QUALITY_I":
-      return 5.5;
-    default:
-      return 0;
-  }
-}
-
 function dayLoadEq(day: PlanDay): number {
   return (
     runMilesFromWorkout(day.workout) +
-    pelotonEqFromType(day.workout.type)
+    (isPelotonWorkout(day.workout.type)
+      ? pelotonLoadEq(day.workout.type)
+      : 0)
   );
 }
 
 /* ---------- validation ---------- */
 
+export interface PlanValidation {
+  rolling10DayTotalEq: number[];
+  dailyLoadEq: number[];
+  counts: Record<WorkoutType, number>;
+  runOnWorkdayCount: number;
+  maxRunStreak: number;
+  phaseRanges: Partial<Record<PlanDay["phase"], { start: string; end: string }>>;
+}
+
 export function validatePlan(
   plan: PlanDay[],
   starting10DayLoad: number
-) {
+): PlanValidation {
   // Daily load derived from FINAL workouts
   const dailyLoadEq: number[] = plan.map(dayLoadEq);
 
@@ -66,7 +71,7 @@ export function validatePlan(
   }
 
   // Workout counts
-  const counts: Record<string, number> = {};
+  const counts = {} as Record<WorkoutType, number>;
   for (const d of plan) {
     counts[d.workout.type] = (counts[d.workout.type] ?? 0) + 1;
   }
@@ -77,7 +82,7 @@ export function validatePlan(
   let currentStreak = 0;
 
   for (const d of plan) {
-    const isRun = d.workout.type.startsWith("RUN_");
+    const isRun = isRunWorkout(d.workout.type);
 
     if (isRun && d.isWorkday) runOnWorkdayCount++;
 
@@ -90,7 +95,7 @@ export function validatePlan(
   }
 
   // Phase ranges
-  const phaseRanges: Record<string, { start: string; end: string }> = {};
+  const phaseRanges: PlanValidation["phaseRanges"] = {};
 
   for (const d of plan) {
     if (!phaseRanges[d.phase]) {
