@@ -17,15 +17,17 @@ function todayYYYYMMDD() {
 /* ---------- UI helpers ---------- */
 
 const WORKOUT_COLORS: Record<string, string> = {
-  RUN_EASY: "#d1fae5",
-  RUN_QUALITY_T: "#fde68a",
-  RUN_QUALITY_I: "#fca5a5",
-  RUN_QUALITY_LONG: "#bbf7d0",
-  PELOTON_EASY: "#e0f2fe",
-  PELOTON_QUALITY_T: "#bae6fd",
-  PELOTON_QUALITY_I: "#7dd3fc",
-  STRENGTH: "#e9d5ff",
-  REST: "#e5e7eb",
+  run: "#d1fae5",
+  peloton: "#bae6fd",
+  strength: "#e9d5ff",
+  rest: "#e5e7eb",
+};
+
+const WORKOUT_LABELS: Record<string, string> = {
+  run: "Run",
+  peloton: "Peloton",
+  strength: "Strength",
+  rest: "Rest",
 };
 
 function WorkoutPill({ type }: { type: string }) {
@@ -40,39 +42,28 @@ function WorkoutPill({ type }: { type: string }) {
         whiteSpace: "nowrap",
       }}
     >
-      {type}
+      {WORKOUT_LABELS[type] ?? type}
     </span>
   );
-}function WorkoutDetails({ workout }: { workout: any }) {
-  const segments = Array.isArray(workout.segments) ? workout.segments : [];
+}
+function WorkoutDetails({ day }: { day: any }) {
+  const segments = Array.isArray(day.segments) ? day.segments : [];
+  const totalRunMiles = Number.isFinite(day.runDistanceMi) ? day.runDistanceMi : 0;
+  const pelotonEq = Number.isFinite(day.pelotonLoadEq) ? day.pelotonLoadEq : 0;
 
-  // total run miles (safe)
-  const totalRunMiles = segments.reduce(
-    (sum: number, s: any) =>
-      sum + (Number.isFinite(s.distanceMi) ? s.distanceMi : 0),
-    0
-  );
-
-  // peloton miles-equivalent
-  let pelotonEq: number | null = null;
-  if (workout.type === "PELOTON_EASY") pelotonEq = 2.5;
-  if (workout.type === "PELOTON_QUALITY_T") pelotonEq = 4.5;
-  if (workout.type === "PELOTON_QUALITY_I") pelotonEq = 5.5;
-
-  // nothing to show
-  if (segments.length === 0 && pelotonEq === null) return null;
+  if (segments.length === 0 && pelotonEq === 0) return null;
 
   return (
     <div>
       {/* Run total */}
-      {workout.type.startsWith("RUN_") && totalRunMiles > 0 && (
+      {day.workoutType === "run" && totalRunMiles > 0 && (
         <div style={{ fontWeight: 600, marginBottom: 4 }}>
           Total: {totalRunMiles.toFixed(1)} mi
         </div>
       )}
 
       {/* Peloton load */}
-      {pelotonEq !== null && (
+      {day.workoutType === "peloton" && pelotonEq > 0 && (
         <div style={{ fontWeight: 600, marginBottom: 4 }}>
           Load: {pelotonEq.toFixed(1)} mi-eq
         </div>
@@ -302,10 +293,10 @@ export default function PlanPage() {
                     <td style={{ padding: 8 }}>{d.isWorkday ? "Yes" : ""}</td>
                     <td style={{ padding: 8 }}>{d.phase}</td>
                     <td style={{ padding: 8 }}>
-                      <WorkoutPill type={d.workout.type} />
+                      <WorkoutPill type={d.workoutType} />
                     </td>
                     <td style={{ padding: 8 }}>
-                      <WorkoutDetails workout={d.workout} />
+                      <WorkoutDetails day={d} />
                     </td>
                     <td
                       style={{
