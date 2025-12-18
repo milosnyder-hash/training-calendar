@@ -1,14 +1,9 @@
 import { addDays, differenceInDays } from "date-fns";
 
-type WorkoutType =
-  | "RUN_EASY"
-  | "RUN_QUALITY_T"
-  | "RUN_QUALITY_I"
-  | "RUN_QUALITY_LONG"
-  | "PELOTON_EASY"
-  | "PELOTON_QUALITY_T"
-  | "STRENGTH"
-  | "REST";
+/* ---------------- types ---------------- */
+
+type WorkoutPhase = "BASE" | "BUILD" | "PEAK" | "TAPER";
+type WorkoutCategory = "run" | "peloton" | "strength" | "rest";
 
 interface Segment {
   label: string;
@@ -16,16 +11,18 @@ interface Segment {
   pace?: string;
 }
 
-interface DayPlan {
+export type PlanDay = {
   date: string;
+  phase: WorkoutPhase;
+  workoutType: WorkoutCategory;
   isWorkday: boolean;
-  phase: "BASE" | "BUILD" | "PEAK" | "TAPER";
-  workout: {
-    type: WorkoutType;
-    segments?: Segment[];
-    loadEq?: number;
-  };
-}
+  segments: Segment[];
+  runDistanceMi: number;
+  runLoadEq: number;
+  pelotonLoadEq: number;
+  totalLoadEq: number;
+  isLongRun: boolean;
+};
 
 interface GeneratePlanArgs {
   startDate: string;
@@ -42,10 +39,10 @@ function formatDate(d: Date) {
   return d.toISOString().slice(0, 10);
 }
 
-function getPhase(date: Date, start: Date, race: Date): DayPlan["phase"] {
+function getPhase(date: Date, start: Date, race: Date): WorkoutPhase {
   const total = differenceInDays(race, start);
   const fromStart = differenceInDays(date, start);
-  const pct = fromStart / total;
+  const pct = total === 0 ? 0 : fromStart / total;
 
   if (pct < 0.35) return "BASE";
   if (pct < 0.75) return "BUILD";
@@ -53,12 +50,41 @@ function getPhase(date: Date, start: Date, race: Date): DayPlan["phase"] {
   return "TAPER";
 }
 
-function isQuality(type: WorkoutType) {
-  return (
-    type === "RUN_QUALITY_LONG" ||
-    type === "RUN_QUALITY_T" ||
-    type === "RUN_QUALITY_I"
-  );
+function roundDistance(value: number) {
+  return Number(value.toFixed(1));
+}
+
+function deriveLongRunMiles(
+  phase: WorkoutPhase,
+  target10DayLoad: number
+): number {
+  const phaseFrac =
+    phase === "BASE"
+      ? 0.22
+      : phase === "BUILD"
+        ? 0.25
+        : phase === "PEAK"
+          ? 0.28
+          : 0.2;
+
+  const scaledMiles = target10DayLoad * phaseFrac * (7 / 10);
+  const miles = Math.max(5, scaledMiles);
+  return Number.isFinite(miles) ? miles : 5;
+}
+
+function computeTotalLoad(runLoadEq: number, pelotonLoadEq: number): number {
+  const run = Number.isFinite(runLoadEq) ? runLoadEq : 0;
+  const peloton = Number.isFinite(pelotonLoadEq) ? pelotonLoadEq : 0;
+  return run + peloton;
+}
+
+function sumRunDistance(segments: Segment[]): number {
+  return segments.reduce((total, segment) => {
+    const distance = Number.isFinite(segment.distanceMi)
+      ? (segment.distanceMi as number)
+      : 0;
+    return total + distance;
+  }, 0);
 }
 
 /* ---------------- main ---------------- */
@@ -69,7 +95,7 @@ export function generatePlan({
   workdayMap,
   starting10DayLoad,
   targetPeak10DayLoad,
-}: GeneratePlanArgs): DayPlan[] {
+}: GeneratePlanArgs): PlanDay[] {
   const start = new Date(startDate);
   const race = new Date(raceDate);
 
@@ -78,15 +104,11 @@ export function generatePlan({
     days.push(new Date(d));
   }
 
-  const plan: DayPlan[] = [];
-
-  // rolling load buffer (10-day)
-  const loadHistory: number[] = [];
+  const plan: PlanDay[] = [];
 
   // weekly state
   let longRunThisWeek = false;
   let qualityCountThisWeek = 0;
-
   let lastLongRunMiles = 5;
 
   for (let i = 0; i < days.length; i++) {
@@ -104,8 +126,7 @@ export function generatePlan({
 
     // rolling 10-day target load (linear ramp)
     const progress =
-      differenceInDays(date, start) /
-      differenceInDays(race, start);
+      differenceInDays(date, start) / Math.max(1, differenceInDays(race, start));
     const target10DayLoad =
       starting10DayLoad +
       (targetPeak10DayLoad - starting10DayLoad) *
@@ -113,23 +134,25 @@ export function generatePlan({
 
     const daysToRace = differenceInDays(race, date);
 
-    let workoutType: WorkoutType = "REST";
-    let segments: Segment[] | undefined;
-    let loadEq = 0;
+    let workoutType: WorkoutCategory = "rest";
+    let segments: Segment[] = [];
+    let runLoadEq = 0;
+    let pelotonLoadEq = 0;
+    let isLongRun = false;
 
     /* ---------- workday rules ---------- */
     if (isWorkday) {
       if (qualityCountThisWeek < 2 && daysToRace > 5) {
-        workoutType = "PELOTON_QUALITY_T";
-        loadEq = 4.5;
+        workoutType = "peloton";
+        pelotonLoadEq = 4.5;
       } else {
-        workoutType = "PELOTON_EASY";
-        loadEq = 2.5;
+        workoutType = "peloton";
+        pelotonLoadEq = 2.5;
       }
 
       if (dayOfWeek === 2 || dayOfWeek === 4) {
-        workoutType = "STRENGTH";
-        loadEq = 0;
+        workoutType = "strength";
+        pelotonLoadEq = 0;
       }
     }
 
@@ -141,91 +164,88 @@ export function generatePlan({
         daysToRace > 5 &&
         qualityCountThisWeek < 2
       ) {
-        workoutType = "RUN_QUALITY_LONG";
+        workoutType = "run";
 
-        const phaseFrac =
-          phase === "BASE" ? 0.22 :
-          phase === "BUILD" ? 0.25 :
-          phase === "PEAK" ? 0.28 :
-          0.2;
-
-        const longMiles = Math.max(
-          5,
-          target10DayLoad * phaseFrac * (7 / 10)
-        );
+        const longMiles = deriveLongRunMiles(phase, target10DayLoad);
 
         lastLongRunMiles = longMiles;
 
         segments = [
           {
             label: "Long run",
-            distanceMi: Number(longMiles.toFixed(1)),
+            distanceMi: roundDistance(longMiles),
             pace: "9:35 / mi–10:23 / mi",
           },
         ];
 
-        loadEq = longMiles;
+        runLoadEq = Number.isFinite(longMiles) ? longMiles : 0;
         longRunThisWeek = true;
         qualityCountThisWeek += 1;
+        isLongRun = true;
       }
 
       // QUALITY T
       else if (qualityCountThisWeek < 2 && daysToRace > 5) {
-        workoutType = "RUN_QUALITY_T";
+        workoutType = "run";
 
         const total = Math.max(6, target10DayLoad * 0.15);
 
-        segments = [
+        const rawSegments: Segment[] = [
           { label: "Warmup", distanceMi: total * 0.25 },
           { label: "Threshold", distanceMi: total * 0.55 },
           { label: "Cooldown", distanceMi: total * 0.2 },
-        ].map(s => ({
-          ...s,
-          distanceMi: Number(s.distanceMi!.toFixed(1)),
+        ];
+
+        segments = rawSegments.map(segment => ({
+          ...segment,
+          distanceMi: roundDistance(segment.distanceMi ?? 0),
           pace:
-            s.label === "Threshold"
+            segment.label === "Threshold"
               ? "8:29 / mi–8:41 / mi"
               : "9:35 / mi–10:23 / mi",
         }));
 
-        loadEq = total;
+        runLoadEq = Number.isFinite(total) ? total : 0;
         qualityCountThisWeek += 1;
       }
 
       // EASY RUN
       else {
-        workoutType = "RUN_EASY";
+        workoutType = "run";
 
         const easyMiles = Math.min(
           lastLongRunMiles * 0.75,
           Math.max(3, target10DayLoad * 0.1)
         );
 
+        const safeMiles = Number.isFinite(easyMiles) ? easyMiles : 3;
+
         segments = [
           {
             label: "Easy run",
-            distanceMi: Number(easyMiles.toFixed(1)),
+            distanceMi: roundDistance(safeMiles),
             pace: "9:35 / mi–10:23 / mi",
           },
         ];
 
-        loadEq = easyMiles;
+        runLoadEq = safeMiles;
       }
     }
 
-    // update rolling load
-    loadHistory.push(loadEq);
-    if (loadHistory.length > 10) loadHistory.shift();
+    const runDistanceMi = workoutType === "run" ? sumRunDistance(segments) : 0;
+    const totalLoadEq = computeTotalLoad(runLoadEq, pelotonLoadEq);
 
     plan.push({
       date: dateStr,
       isWorkday,
       phase,
-      workout: {
-        type: workoutType,
-        segments,
-        loadEq,
-      },
+      workoutType,
+      segments,
+      runDistanceMi,
+      runLoadEq,
+      pelotonLoadEq,
+      totalLoadEq,
+      isLongRun,
     });
   }
 
