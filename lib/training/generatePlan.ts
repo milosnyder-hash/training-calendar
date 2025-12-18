@@ -3,6 +3,7 @@ import {
   PlanDay,
   Segment,
   WorkoutType,
+  isQualityWorkout,
   pelotonLoadEq,
 } from "./types";
 
@@ -87,6 +88,7 @@ export function generatePlan({
     let workoutType: WorkoutType = "REST";
     let segments: Segment[] | undefined;
     let loadEq = 0;
+    let isQualityDay = false;
 
     /* ---------- workday rules ---------- */
     if (isWorkday) {
@@ -101,6 +103,9 @@ export function generatePlan({
       if (dayOfWeek === 2 || dayOfWeek === 4) {
         workoutType = "STRENGTH";
         loadEq = 0;
+        isQualityDay = false;
+      } else {
+        isQualityDay = isQualityWorkout(workoutType);
       }
     }
 
@@ -137,7 +142,7 @@ export function generatePlan({
 
         loadEq = longMiles;
         longRunThisWeek = true;
-        qualityCountThisWeek += 1;
+        isQualityDay = true;
       }
 
       // QUALITY T
@@ -160,7 +165,7 @@ export function generatePlan({
         }));
 
         loadEq = total;
-        qualityCountThisWeek += 1;
+        isQualityDay = true;
       }
 
       // EASY RUN
@@ -181,7 +186,12 @@ export function generatePlan({
         ];
 
         loadEq = easyMiles;
+        isQualityDay = false;
       }
+    }
+
+    if (isQualityDay) {
+      qualityCountThisWeek += 1;
     }
 
     // update rolling load
