@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { generatePlan } from "@/lib/training/generatePlan";
-import { validatePlan } from "@/lib/training/validatePlan";
+import type { PlanDay } from "@/lib/training/generatePlan";
 
 const RACE_DATE = "2026-05-24";
 
@@ -46,24 +46,129 @@ function WorkoutPill({ type }: { type: string }) {
     </span>
   );
 }
-function WorkoutDetails({ day }: { day: any }) {
+
+function safeNumber(value: any): number {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : 0;
+}
+
+function sumSegmentMiles(segments: any[]): number {
+  return segments.reduce((sum, segment) => {
+    if (segment && Number.isFinite(segment.distanceMi)) {
+      return sum + segment.distanceMi;
+    }
+    return sum;
+  }, 0);
+}
+
+type PlanStats = {
+  rolling10DayTotalEq: number[];
+  counts: Record<string, number>;
+  runOnWorkdayCount: number;
+  maxRunStreak: number;
+  phaseRanges: Record<string, { start: string; end: string }>;
+};
+
+function buildPlanStats(plan: PlanDay[], starting10DayLoad: number): PlanStats {
+  const dailyLoadEq = plan.map((day) => {
+    const segments = Array.isArray(day.segments) ? day.segments : [];
+    const workoutType = day.workoutType;
+
+    if (workoutType === "run") {
+      return sumSegmentMiles(segments);
+    }
+
+    if (workoutType === "peloton") {
+      return safeNumber(day.pelotonLoadEq);
+    }
+
+    return 0;
+  });
+
+  const rolling10DayTotalEq: number[] = [];
+  const ghostDailyLoad = safeNumber(starting10DayLoad) / 10;
+
+  for (let i = 0; i < dailyLoadEq.length; i++) {
+    let sum = 0;
+
+    for (let j = i - 9; j <= i; j++) {
+      if (j < 0) {
+        sum += ghostDailyLoad;
+      } else {
+        sum += dailyLoadEq[j];
+      }
+    }
+
+    rolling10DayTotalEq.push(sum);
+  }
+
+  const counts: Record<string, number> = {};
+  let runOnWorkdayCount = 0;
+  let maxRunStreak = 0;
+  let currentStreak = 0;
+
+  for (const day of plan) {
+    const workoutType = day.workoutType;
+    counts[workoutType] = (counts[workoutType] ?? 0) + 1;
+
+    const isRun = workoutType === "run";
+    const isWorkday = day.isWorkday;
+
+    if (isRun && isWorkday) {
+      runOnWorkdayCount++;
+    }
+
+    if (isRun) {
+      currentStreak++;
+      maxRunStreak = Math.max(maxRunStreak, currentStreak);
+    } else {
+      currentStreak = 0;
+    }
+  }
+
+  const phaseRanges: Record<string, { start: string; end: string }> = {};
+
+  for (const day of plan) {
+    const phase = day.phase;
+    const date = day.date;
+
+    if (!date) continue;
+
+    if (!phaseRanges[phase]) {
+      phaseRanges[phase] = { start: date, end: date };
+    } else {
+      phaseRanges[phase].end = date;
+    }
+  }
+
+  return {
+    rolling10DayTotalEq,
+    counts,
+    runOnWorkdayCount,
+    maxRunStreak,
+    phaseRanges,
+  };
+}
+
+function WorkoutDetails({ day }: { day: PlanDay }) {
   const segments = Array.isArray(day.segments) ? day.segments : [];
-  const totalRunMiles = Number.isFinite(day.runDistanceMi) ? day.runDistanceMi : 0;
-  const pelotonEq = Number.isFinite(day.pelotonLoadEq) ? day.pelotonLoadEq : 0;
+  const workoutType = day.workoutType;
+  const totalRunMiles = sumSegmentMiles(segments);
+  const pelotonEq = safeNumber(day.pelotonLoadEq);
 
   if (segments.length === 0 && pelotonEq === 0) return null;
 
   return (
     <div>
       {/* Run total */}
-      {day.workoutType === "run" && totalRunMiles > 0 && (
+      {workoutType === "run" && totalRunMiles > 0 && (
         <div style={{ fontWeight: 600, marginBottom: 4 }}>
           Total: {totalRunMiles.toFixed(1)} mi
         </div>
       )}
 
       {/* Peloton load */}
-      {day.workoutType === "peloton" && pelotonEq > 0 && (
+      {workoutType === "peloton" && pelotonEq > 0 && (
         <div style={{ fontWeight: 600, marginBottom: 4 }}>
           Load: {pelotonEq.toFixed(1)} mi-eq
         </div>
@@ -99,8 +204,7 @@ export default function PlanPage() {
   const [targetPeak10DayLoad, setTargetPeak10DayLoad] = useState(55); // mi-eq
 
   const [error, setError] = useState<string | null>(null);
-  const [plan, setPlan] = useState<any[] | null>(null);
-  const [validation, setValidation] = useState<any | null>(null);
+  const [plan, setPlan] = useState<PlanDay[] | null>(null);
   const [hasWorkdays, setHasWorkdays] = useState(false);
 
   useEffect(() => {
@@ -127,14 +231,14 @@ export default function PlanPage() {
       });
 
       setPlan(generatedPlan);
-      setValidation(validatePlan(generatedPlan, starting10DayLoad));
 
     } catch (e: any) {
       setError(e.message || "Unknown error");
     }
   }
 
-  const phaseRanges = validation?.phaseRanges ?? null;
+  const stats = plan ? buildPlanStats(plan, starting10DayLoad) : null;
+  const phaseRanges = stats?.phaseRanges ?? null;
 
   return (
     <main style={{ padding: 24, maxWidth: 1400 }}>
@@ -258,13 +362,13 @@ export default function PlanPage() {
       )}
 
       {/* Table */}
-      {plan && validation && (
+      {plan && stats && (
         <div style={{ marginTop: 28 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
             <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Training Plan</h2>
             <div style={{ fontSize: 13, color: "#374151" }}>
-              Runs on workdays: <strong>{validation.runOnWorkdayCount}</strong>{" "}
-              · Max run streak: <strong>{validation.maxRunStreak}</strong>
+              Runs on workdays: <strong>{stats.runOnWorkdayCount}</strong>{" "}
+              · Max run streak: <strong>{stats.maxRunStreak}</strong>
             </div>
           </div>
 
@@ -287,8 +391,8 @@ export default function PlanPage() {
                 </tr>
               </thead>
               <tbody>
-                {plan.map((d: any, idx: number) => (
-                  <tr key={d.date} style={{ borderBottom: "1px solid #eee" }}>
+                {plan.map((d: PlanDay, idx: number) => (
+                  <tr key={d.date ?? idx} style={{ borderBottom: "1px solid #eee" }}>
                     <td style={{ padding: 8 }}>{d.date}</td>
                     <td style={{ padding: 8 }}>{d.isWorkday ? "Yes" : ""}</td>
                     <td style={{ padding: 8 }}>{d.phase}</td>
@@ -305,8 +409,8 @@ export default function PlanPage() {
                         fontVariantNumeric: "tabular-nums",
                       }}
                     >
-                      {validation?.rolling10DayTotalEq?.[idx] !== undefined
-                        ? validation.rolling10DayTotalEq[idx].toFixed(1)
+                      {stats.rolling10DayTotalEq[idx] !== undefined
+                        ? stats.rolling10DayTotalEq[idx].toFixed(1)
                         : "—"}
                     </td>
                   </tr>
@@ -320,7 +424,7 @@ export default function PlanPage() {
             <details>
               <summary style={{ cursor: "pointer" }}>Workout counts</summary>
               <pre style={{ marginTop: 10, padding: 12, background: "#f6f6f6", borderRadius: 6 }}>
-                {JSON.stringify(validation.counts, null, 2)}
+                {JSON.stringify(stats.counts, null, 2)}
               </pre>
             </details>
           </div>
