@@ -30,7 +30,14 @@ const WORKOUT_LABELS: Record<string, string> = {
   rest: "Rest",
 };
 
-function WorkoutPill({ type }: { type: string }) {
+function workoutLabel(day: PlanDay) {
+  if (day.workoutType === "peloton") {
+    return day.pelotonType === "quality" ? "Peloton Quality" : "Peloton Easy";
+  }
+  return WORKOUT_LABELS[day.workoutType] ?? day.workoutType;
+}
+
+function WorkoutPill({ day }: { day: PlanDay }) {
   return (
     <span
       style={{
@@ -38,11 +45,11 @@ function WorkoutPill({ type }: { type: string }) {
         borderRadius: 12,
         fontSize: 12,
         fontWeight: 600,
-        background: WORKOUT_COLORS[type] ?? "#eee",
+        background: WORKOUT_COLORS[day.workoutType] ?? "#eee",
         whiteSpace: "nowrap",
       }}
     >
-      {WORKOUT_LABELS[type] ?? type}
+      {workoutLabel(day)}
     </span>
   );
 }
@@ -156,10 +163,11 @@ function WorkoutDetails({ day }: { day: PlanDay }) {
   const totalRunMiles = sumSegmentMiles(segments);
   const pelotonEq = safeNumber(day.pelotonLoadEq);
 
-  if (segments.length === 0 && pelotonEq === 0) return null;
-
   return (
     <div>
+      <div style={{ fontWeight: 600, marginBottom: 4 }}>
+        {day.isQualityDay ? "Quality day" : "Non-quality day"}
+      </div>
       {/* Run total */}
       {workoutType === "run" && totalRunMiles > 0 && (
         <div style={{ fontWeight: 600, marginBottom: 4 }}>
@@ -170,7 +178,8 @@ function WorkoutDetails({ day }: { day: PlanDay }) {
       {/* Peloton load */}
       {workoutType === "peloton" && pelotonEq > 0 && (
         <div style={{ fontWeight: 600, marginBottom: 4 }}>
-          Load: {pelotonEq.toFixed(1)} mi-eq
+          {day.pelotonType === "quality" ? "Quality" : "Easy"} · Load:{" "}
+          {pelotonEq.toFixed(1)} mi-eq
         </div>
       )}
 
@@ -397,7 +406,7 @@ export default function PlanPage() {
                     <td style={{ padding: 8 }}>{d.isWorkday ? "Yes" : ""}</td>
                     <td style={{ padding: 8 }}>{d.phase}</td>
                     <td style={{ padding: 8 }}>
-                      <WorkoutPill type={d.workoutType} />
+                      <WorkoutPill day={d} />
                     </td>
                     <td style={{ padding: 8 }}>
                       <WorkoutDetails day={d} />

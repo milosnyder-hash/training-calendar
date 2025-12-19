@@ -7,34 +7,20 @@ function safeNum(v: any): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-function runMilesFromWorkout(workout: any): number {
-  if (!workout?.type?.startsWith("RUN_")) return 0;
-  if (!Array.isArray(workout.segments)) return 0;
-
-  return workout.segments.reduce(
-    (sum: number, s: any) => sum + safeNum(s.distanceMi),
-    0
-  );
-}
-
-function pelotonEqFromType(type: string): number {
-  switch (type) {
-    case "PELOTON_EASY":
-      return 2.5;
-    case "PELOTON_QUALITY_T":
-      return 4.5;
-    case "PELOTON_QUALITY_I":
-      return 5.5;
-    default:
-      return 0;
-  }
-}
-
 function dayLoadEq(day: PlanDay): number {
-  return (
-    runMilesFromWorkout(day.workout) +
-    pelotonEqFromType(day.workout.type)
-  );
+  if (day.workoutType === "run") {
+    if (!Array.isArray(day.segments)) return 0;
+    return day.segments.reduce(
+      (sum: number, s: any) => sum + safeNum(s.distanceMi),
+      0
+    );
+  }
+
+  if (day.workoutType === "peloton") {
+    return safeNum(day.pelotonLoadEq);
+  }
+
+  return 0;
 }
 
 /* ---------- validation ---------- */
@@ -68,7 +54,7 @@ export function validatePlan(
   // Workout counts
   const counts: Record<string, number> = {};
   for (const d of plan) {
-    counts[d.workout.type] = (counts[d.workout.type] ?? 0) + 1;
+    counts[d.workoutType] = (counts[d.workoutType] ?? 0) + 1;
   }
 
   // Run-on-workday + max run streak
@@ -77,7 +63,7 @@ export function validatePlan(
   let currentStreak = 0;
 
   for (const d of plan) {
-    const isRun = d.workout.type.startsWith("RUN_");
+    const isRun = d.workoutType === "run";
 
     if (isRun && d.isWorkday) runOnWorkdayCount++;
 
