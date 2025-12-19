@@ -84,7 +84,8 @@ function capBelowLongRun(value: number, longRunMiles: number): number {
 
 function qualityMaxForPhase(phase: WorkoutPhase) {
   if (phase === "BASE") return 1;
-  if (phase === "BUILD") return 3;
+  if (phase === "BUILD") return 2;
+  if (phase === "TAPER") return 1;
   return 2;
 }
 
@@ -101,6 +102,13 @@ function sumRunDistance(segments: Segment[]): number {
       : 0;
     return total + distance;
   }, 0);
+}
+
+function hasSegmentLabel(segments: Segment[], label: string) {
+  for (const segment of segments) {
+    if (segment.label === label) return true;
+  }
+  return false;
 }
 
 /* ---------------- main ---------------- */
@@ -126,6 +134,47 @@ export function generatePlan({
 
   const plan: PlanDay[] = [];
 
+  const EASY_PACE = "9:35 / mi–10:23 / mi";
+  const THRESHOLD_PACE = "8:29 / mi–8:41 / mi";
+  const INTERVAL_PACE = "8:05 / mi–8:17 / mi";
+
+  const downgradeDayToEasy = (
+    day: PlanDay,
+    longRunTargetMiles: number,
+    weeklyTargetMiles: number
+  ) => {
+    if (day.workoutType === "peloton") {
+      day.pelotonType = "easy";
+      day.pelotonLoadEq = 2.5;
+      day.isQualityDay = false;
+      day.totalLoadEq = computeTotalLoad(day.runLoadEq, day.pelotonLoadEq);
+      return;
+    }
+    if (day.workoutType === "run") {
+      const easyMilesRaw = Math.min(
+        longRunTargetMiles * 0.75,
+        Math.max(3, weeklyTargetMiles * 0.1)
+      );
+      const easyMiles = capBelowLongRun(easyMilesRaw, longRunTargetMiles);
+      const safeMiles = Number.isFinite(easyMiles) ? easyMiles : 3;
+      const cappedMiles = Number.isFinite(day.runDistanceMi)
+        ? Math.min(day.runDistanceMi, safeMiles)
+        : safeMiles;
+      day.segments = [
+        {
+          label: "Easy Run",
+          distanceMi: roundDistance(cappedMiles),
+          pace: EASY_PACE,
+        },
+      ];
+      day.runDistanceMi = sumRunDistance(day.segments);
+      day.runLoadEq = day.runDistanceMi;
+      day.isQualityDay = false;
+      day.isLongRun = false;
+      day.totalLoadEq = computeTotalLoad(day.runLoadEq, day.pelotonLoadEq);
+    }
+  };
+
   const isWorkdayByIndex = days.map((day) =>
     Boolean(workdayMap[formatDate(day)])
   );
@@ -142,15 +191,9 @@ export function generatePlan({
 
   // weekly state
   let currentWeekIndex = -1;
-  let longRunThisWeek = false;
-  let qualityCountThisWeek = 0;
-  let lastLongRunMiles = 5;
-  let weekQualityMax = 1;
-  let weekLongRunMiles = 0;
   let baseWeeklyTargetMiles = 0;
   let baseWeeksSinceIncrease = 0;
   let qualityRotationIndex = 0;
-  let prevQualityDay = false;
 
   for (let i = 0; i < days.length; i++) {
     const date = days[i];
@@ -174,11 +217,6 @@ export function generatePlan({
 
     if (weekIndex !== currentWeekIndex) {
       currentWeekIndex = weekIndex;
-      longRunThisWeek = false;
-      qualityCountThisWeek = 0;
-      weekLongRunMiles = 0;
-
-      weekQualityMax = qualityMaxForPhase(phase);
 
       if (phase === "BASE") {
         if (baseWeeklyTargetMiles === 0 || baseWeeksSinceIncrease >= 2) {
@@ -218,8 +256,25 @@ export function generatePlan({
       phase === "BASE" && baseWeeklyTargetMiles > 0
         ? baseWeeklyTargetMiles
         : weeklyTargetMilesRaw;
-    const longRunCapMiles =
-      weekIndex === raceWeekIndex ? raceDistanceMiles : weekLongRunMiles || lastLongRunMiles;
+    let longRunTargetMiles = deriveLongRunMiles(phase, weeklyTargetMiles);
+    if (phase === "BASE") {
+      longRunTargetMiles = Math.min(longRunTargetMiles, weeklyTargetMiles * 0.25);
+    }
+    longRunTargetMiles = roundDistance(Math.max(5, longRunTargetMiles));
+
+    const recentDays = plan.slice(Math.max(0, plan.length - 6));
+    let recentQualityCount = recentDays.filter((day) => day.isQualityDay).length;
+    const recentLongRunCount = recentDays.filter((day) => day.isLongRun).length;
+    let recentNonLongQualityCount = recentDays.filter(
+      (day) => day.isQualityDay && !day.isLongRun
+    ).length;
+    const recentThresholdCount = recentDays.filter(
+      (day) => day.workoutType === "run" && hasSegmentLabel(day.segments, "Threshold")
+    ).length;
+    const prevDay = plan.length > 0 ? plan[plan.length - 1] : null;
+    let prevQualityDay = Boolean(prevDay && prevDay.isQualityDay);
+
+    const weekQualityMax = qualityMaxForPhase(phase);
 
     if (isRestDay) {
       workoutType = "rest";
@@ -232,182 +287,182 @@ export function generatePlan({
         pelotonType = "easy";
         pelotonLoadEq = 2.5;
 
+        const canAddNonLongQuality =
+          phase === "BUILD" || phase === "PEAK" || phase === "TAPER"
+            ? recentNonLongQualityCount === 0
+            : false;
+        const taperQualityAllowed = phase !== "TAPER" || daysToRace > 6;
         const canBeQuality =
           !prevQualityDay &&
           phase !== "BASE" &&
-          qualityCountThisWeek < weekQualityMax &&
-          daysToRace > 3;
+          recentQualityCount < weekQualityMax &&
+          daysToRace > 3 &&
+          taperQualityAllowed &&
+          canAddNonLongQuality;
 
         if (canBeQuality) {
           pelotonType = "quality";
           pelotonLoadEq = 4.5;
-          qualityCountThisWeek += 1;
           isQualityDay = true;
         }
       }
     } else {
       workoutType = "run";
 
+      const hasLongRunInWindow = recentLongRunCount > 0;
+      if (!hasLongRunInWindow && prevQualityDay && !hasFutureRunDay && prevDay) {
+        const wasQuality = prevDay.isQualityDay;
+        const wasNonLongQuality = prevDay.isQualityDay && !prevDay.isLongRun;
+        downgradeDayToEasy(prevDay, longRunTargetMiles, weeklyTargetMiles);
+        if (wasQuality) {
+          recentQualityCount = Math.max(0, recentQualityCount - 1);
+        }
+        if (wasNonLongQuality) {
+          recentNonLongQualityCount = Math.max(0, recentNonLongQualityCount - 1);
+        }
+        prevQualityDay = false;
+      }
+      const taperLongRunBlocked =
+        phase === "TAPER" && daysToRace <= 6 && !isRaceDay;
+      const canScheduleLongRun =
+        !prevQualityDay && !hasLongRunInWindow && !taperLongRunBlocked;
+
       if (isRaceDay) {
         const raceMiles = roundDistance(Math.max(5, raceDistanceMiles));
-        segments = [
-          {
-            label: "Race",
-            distanceMi: raceMiles,
-            pace: "8:29 / mi–8:41 / mi",
-          },
-        ];
-        runLoadEq = raceMiles;
-        isLongRun = true;
-        isQualityDay = true;
-        longRunThisWeek = true;
-        weekLongRunMiles = raceMiles;
-        lastLongRunMiles = Math.max(lastLongRunMiles, raceMiles);
-        qualityCountThisWeek += 1;
+        if (canScheduleLongRun) {
+          segments = [
+            {
+              label: "Long Run",
+              distanceMi: raceMiles,
+              pace: EASY_PACE,
+            },
+          ];
+          runLoadEq = raceMiles;
+          isLongRun = true;
+          isQualityDay = true;
+        } else {
+          const taperThresholdAllowed =
+            phase !== "TAPER" ||
+            daysToRace > 9 ||
+            (daysToRace <= 9 && recentThresholdCount === 0);
+          if (taperThresholdAllowed) {
+            segments = [
+              {
+                label: "Threshold",
+                distanceMi: raceMiles,
+                pace: THRESHOLD_PACE,
+              },
+            ];
+            runLoadEq = raceMiles;
+            isQualityDay = true;
+          } else {
+            segments = [
+              {
+                label: "Easy Run",
+                distanceMi: raceMiles,
+                pace: EASY_PACE,
+              },
+            ];
+            runLoadEq = raceMiles;
+          }
+        }
       } else if (weekIndex === raceWeekIndex && daysToRace > 0) {
         const easyMilesRaw = Math.min(
-          longRunCapMiles * 0.65,
+          longRunTargetMiles * 0.65,
           Math.max(3, weeklyTargetMiles * 0.08)
         );
-        const easyMiles = capBelowLongRun(
-          easyMilesRaw,
-          longRunCapMiles
-        );
+        const easyMiles = capBelowLongRun(easyMilesRaw, longRunTargetMiles);
 
         const safeMiles = Number.isFinite(easyMiles) ? easyMiles : 3;
 
         segments = [
           {
-            label: "Easy run",
+            label: "Easy Run",
             distanceMi: roundDistance(safeMiles),
-            pace: "9:35 / mi–10:23 / mi",
+            pace: EASY_PACE,
           },
         ];
 
         runLoadEq = safeMiles;
-      } else if (!longRunThisWeek) {
-        if (prevQualityDay && !hasFutureRunDay) {
-          const prevDay = plan[plan.length - 1];
-          if (prevDay?.isQualityDay && prevDay.workoutType === "peloton") {
-            prevDay.isQualityDay = false;
-            prevDay.pelotonType = "easy";
-            prevDay.pelotonLoadEq = 2.5;
-            prevDay.totalLoadEq = computeTotalLoad(
-              prevDay.runLoadEq,
-              prevDay.pelotonLoadEq
-            );
-            qualityCountThisWeek = Math.max(0, qualityCountThisWeek - 1);
-            prevQualityDay = false;
-          }
-          if (
-            prevDay?.isQualityDay &&
-            prevDay.workoutType === "run" &&
-            !prevDay.isLongRun
-          ) {
-            prevDay.isQualityDay = false;
-            const fallbackMilesRaw = Math.min(
-              longRunCapMiles * 0.75,
-              Math.max(3, weeklyTargetMiles * 0.1)
-            );
-            const fallbackMiles = capBelowLongRun(
-              fallbackMilesRaw,
-              longRunCapMiles
-            );
-            prevDay.segments = [
-              {
-                label: "Easy run",
-                distanceMi: roundDistance(fallbackMiles),
-                pace: "9:35 / mi–10:23 / mi",
-              },
-            ];
-            prevDay.runDistanceMi = sumRunDistance(prevDay.segments);
-            prevDay.runLoadEq = prevDay.runDistanceMi;
-            prevDay.totalLoadEq = computeTotalLoad(
-              prevDay.runLoadEq,
-              prevDay.pelotonLoadEq
-            );
-            qualityCountThisWeek = Math.max(0, qualityCountThisWeek - 1);
-            prevQualityDay = false;
-          }
-        }
-      }
-
-      if (!longRunThisWeek && !prevQualityDay) {
-        let longMiles = deriveLongRunMiles(phase, weeklyTargetMiles);
-        if (phase === "BASE") {
-          longMiles = Math.min(longMiles, weeklyTargetMiles * 0.25);
+      } else if (canScheduleLongRun) {
+        let longMiles = longRunTargetMiles;
+        if (weekIndex === raceWeekIndex) {
+          longMiles = Math.min(longMiles, raceDistanceMiles);
         }
 
         longMiles = roundDistance(Math.max(5, longMiles));
-        lastLongRunMiles = longMiles;
-        weekLongRunMiles = longMiles;
 
         segments = [
           {
-            label: "Long run",
+            label: "Long Run",
             distanceMi: roundDistance(longMiles),
-            pace: "9:35 / mi–10:23 / mi",
+            pace: EASY_PACE,
           },
         ];
 
         runLoadEq = Number.isFinite(longMiles) ? longMiles : 0;
-        longRunThisWeek = true;
-        qualityCountThisWeek += 1;
         isLongRun = true;
         isQualityDay = true;
       } else {
+        const canAddNonLongQuality =
+          phase === "BUILD" || phase === "PEAK" || phase === "TAPER"
+            ? recentNonLongQualityCount === 0
+            : false;
+        const taperQualityAllowed = phase !== "TAPER" || daysToRace > 6;
+        const taperThresholdAllowed =
+          phase !== "TAPER" ||
+          daysToRace > 9 ||
+          (daysToRace <= 9 && recentThresholdCount === 0);
         const canBeQualityRun =
           phase !== "BASE" &&
           !prevQualityDay &&
-          qualityCountThisWeek < weekQualityMax &&
-          daysToRace > 3;
+          recentQualityCount < weekQualityMax &&
+          daysToRace > 3 &&
+          taperQualityAllowed &&
+          canAddNonLongQuality &&
+          taperThresholdAllowed;
 
         if (canBeQualityRun) {
           let runTypeLabel = "Threshold";
           if (phase === "BUILD") {
-            const rotation = ["Threshold", "Interval", "Repetition", "Hill"];
+            const rotation = ["Threshold", "Intervals"];
             runTypeLabel = rotation[qualityRotationIndex % rotation.length];
             qualityRotationIndex += 1;
           }
+          if (phase === "PEAK") {
+            runTypeLabel = "Threshold";
+          }
+          if (phase === "TAPER") {
+            runTypeLabel = "Threshold";
+          }
 
           const totalRaw = Math.max(5, weeklyTargetMiles * 0.15);
-          const total = capBelowLongRun(totalRaw, longRunCapMiles);
+          const total = capBelowLongRun(totalRaw, longRunTargetMiles);
 
-          const rawSegments: Segment[] = [
-            { label: "Warmup", distanceMi: total * 0.25 },
-            { label: runTypeLabel, distanceMi: total * 0.55 },
-            { label: "Cooldown", distanceMi: total * 0.2 },
+          segments = [
+            {
+              label: runTypeLabel,
+              distanceMi: roundDistance(total),
+              pace: runTypeLabel === "Intervals" ? INTERVAL_PACE : THRESHOLD_PACE,
+            },
           ];
 
-          segments = rawSegments.map((segment) => ({
-            ...segment,
-            distanceMi: roundDistance(segment.distanceMi ?? 0),
-            pace:
-              segment.label === "Threshold"
-                ? "8:29 / mi–8:41 / mi"
-                : "9:35 / mi–10:23 / mi",
-          }));
-
           runLoadEq = Number.isFinite(total) ? total : 0;
-          qualityCountThisWeek += 1;
           isQualityDay = true;
         } else {
           const easyMilesRaw = Math.min(
-            longRunCapMiles * 0.75,
+            longRunTargetMiles * 0.75,
             Math.max(3, weeklyTargetMiles * 0.1)
           );
-          const easyMiles = capBelowLongRun(
-            easyMilesRaw,
-            longRunCapMiles
-          );
+          const easyMiles = capBelowLongRun(easyMilesRaw, longRunTargetMiles);
 
           const safeMiles = Number.isFinite(easyMiles) ? easyMiles : 3;
 
           segments = [
             {
-              label: "Easy run",
+              label: "Easy Run",
               distanceMi: roundDistance(safeMiles),
-              pace: "9:35 / mi–10:23 / mi",
+              pace: EASY_PACE,
             },
           ];
 
@@ -417,7 +472,89 @@ export function generatePlan({
     }
 
     if (isQualityDay && prevQualityDay) {
+      if (workoutType === "peloton") {
+        pelotonType = "easy";
+        pelotonLoadEq = 2.5;
+      }
+      if (workoutType === "run") {
+        const easyMilesRaw = Math.min(
+          longRunTargetMiles * 0.75,
+          Math.max(3, weeklyTargetMiles * 0.1)
+        );
+        const easyMiles = capBelowLongRun(easyMilesRaw, longRunTargetMiles);
+        const safeMiles = Number.isFinite(easyMiles) ? easyMiles : 3;
+        segments = [
+          {
+            label: "Easy Run",
+            distanceMi: roundDistance(safeMiles),
+            pace: EASY_PACE,
+          },
+        ];
+        runLoadEq = safeMiles;
+        isLongRun = false;
+      }
       isQualityDay = false;
+    }
+
+    const qualityWindowCount = recentQualityCount + (isQualityDay ? 1 : 0);
+    if (qualityWindowCount > weekQualityMax && isQualityDay) {
+      if (isLongRun) {
+        let downgradedPrior = false;
+        for (let j = plan.length - 1; j >= 0 && plan.length - j <= 6; j -= 1) {
+          const day = plan[j];
+          if (day.isQualityDay && !day.isLongRun) {
+            downgradeDayToEasy(day, longRunTargetMiles, weeklyTargetMiles);
+            downgradedPrior = true;
+            break;
+          }
+        }
+        if (!downgradedPrior) {
+          if (workoutType === "peloton") {
+            pelotonType = "easy";
+            pelotonLoadEq = 2.5;
+          }
+          if (workoutType === "run") {
+            const easyMilesRaw = Math.min(
+              longRunTargetMiles * 0.75,
+              Math.max(3, weeklyTargetMiles * 0.1)
+            );
+            const easyMiles = capBelowLongRun(easyMilesRaw, longRunTargetMiles);
+            const safeMiles = Number.isFinite(easyMiles) ? easyMiles : 3;
+            segments = [
+              {
+                label: "Easy Run",
+                distanceMi: roundDistance(safeMiles),
+                pace: EASY_PACE,
+              },
+            ];
+            runLoadEq = safeMiles;
+            isLongRun = false;
+          }
+          isQualityDay = false;
+        }
+      } else {
+        if (workoutType === "peloton") {
+          pelotonType = "easy";
+          pelotonLoadEq = 2.5;
+        }
+        if (workoutType === "run") {
+          const easyMilesRaw = Math.min(
+            longRunTargetMiles * 0.75,
+            Math.max(3, weeklyTargetMiles * 0.1)
+          );
+          const easyMiles = capBelowLongRun(easyMilesRaw, longRunTargetMiles);
+          const safeMiles = Number.isFinite(easyMiles) ? easyMiles : 3;
+          segments = [
+            {
+              label: "Easy Run",
+              distanceMi: roundDistance(safeMiles),
+              pace: EASY_PACE,
+            },
+          ];
+          runLoadEq = safeMiles;
+        }
+        isQualityDay = false;
+      }
     }
 
     const runDistanceMi = workoutType === "run" ? sumRunDistance(segments) : 0;
