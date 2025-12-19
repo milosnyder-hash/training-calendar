@@ -61,6 +61,10 @@ function deriveWeeklyTargetMiles(target10DayLoad: number): number {
   return Number.isFinite(miles) ? miles : 0;
 }
 
+const EASY_PACE = "9:35 / mi–10:23 / mi";
+const THRESHOLD_PACE = "8:29 / mi–8:41 / mi";
+const INTERVAL_PACE = "8:05 / mi–8:17 / mi";
+
 function deriveLongRunMiles(phase: WorkoutPhase, weeklyTargetMiles: number): number {
   const phaseFrac =
     phase === "BASE"
@@ -111,6 +115,173 @@ function hasSegmentLabel(segments: Segment[], label: string) {
   return false;
 }
 
+function updateRunStats(day: PlanDay) {
+  if (day.workoutType !== "run") return;
+  day.runDistanceMi = sumRunDistance(day.segments);
+  day.runLoadEq = day.runDistanceMi;
+  day.totalLoadEq = computeTotalLoad(day.runLoadEq, day.pelotonLoadEq);
+}
+
+function setRunEasy(day: PlanDay, distanceOverride?: number) {
+  if (day.workoutType !== "run") return;
+  const baseDistance = Number.isFinite(distanceOverride)
+    ? (distanceOverride as number)
+    : day.runDistanceMi;
+  const distanceMi = roundDistance(Math.max(0, baseDistance));
+  day.segments = [
+    {
+      label: "Easy Run",
+      distanceMi,
+      pace: EASY_PACE,
+    },
+  ];
+  day.isQualityDay = false;
+  day.isLongRun = false;
+  updateRunStats(day);
+}
+
+function setRunDistance(day: PlanDay, distanceMi: number) {
+  if (day.workoutType !== "run" || day.segments.length === 0) return;
+  const safeDistance = roundDistance(Math.max(0, distanceMi));
+  day.segments = day.segments.map((segment, index) =>
+    index === 0 ? { ...segment, distanceMi: safeDistance } : segment
+  );
+  updateRunStats(day);
+}
+
+function enforceJDRules(plan: PlanDay[], raceDate: string) {
+  const raceIndex = Math.max(
+    0,
+    plan.findIndex((day) => day.date === raceDate)
+  );
+  const taperStartIndex = Math.max(0, raceIndex - 6);
+
+  const isLongRunDay = (day: PlanDay) =>
+    day.workoutType === "run" && hasSegmentLabel(day.segments, "Long Run");
+
+  const isThresholdDay = (day: PlanDay) =>
+    day.workoutType === "run" && hasSegmentLabel(day.segments, "Threshold");
+
+  const isIntervalsDay = (day: PlanDay) =>
+    day.workoutType === "run" && hasSegmentLabel(day.segments, "Intervals");
+
+  const downgradePelotonToEasy = (day: PlanDay) => {
+    day.pelotonType = "easy";
+    day.pelotonLoadEq = 2.5;
+    day.isQualityDay = false;
+    day.totalLoadEq = computeTotalLoad(day.runLoadEq, day.pelotonLoadEq);
+  };
+
+  for (let i = taperStartIndex; i < raceIndex; i += 1) {
+    const day = plan[i];
+    if (isLongRunDay(day)) {
+      setRunEasy(day, day.runDistanceMi);
+    }
+  }
+
+  for (let endIndex = 0; endIndex < plan.length; endIndex += 1) {
+    const startIndex = Math.max(0, endIndex - 6);
+    const window = plan.slice(startIndex, endIndex + 1);
+    const longRunIndices = window
+      .map((day, offset) => (isLongRunDay(day) ? startIndex + offset : -1))
+      .filter((index) => index >= 0);
+
+    if (longRunIndices.length > 1) {
+      const keepIndex = longRunIndices[0];
+      for (const index of longRunIndices.slice(1)) {
+        setRunEasy(plan[index], plan[index].runDistanceMi);
+      }
+      const longRunDistance = plan[keepIndex].runDistanceMi;
+      if (Number.isFinite(longRunDistance) && longRunDistance > 0) {
+        for (let j = startIndex; j <= endIndex; j += 1) {
+          const day = plan[j];
+          if (day.workoutType !== "run" || j === keepIndex) continue;
+          if (day.runDistanceMi > longRunDistance) {
+            setRunDistance(day, longRunDistance);
+          }
+        }
+      }
+    } else if (longRunIndices.length === 1) {
+      const keepIndex = longRunIndices[0];
+      const longRunDistance = plan[keepIndex].runDistanceMi;
+      if (Number.isFinite(longRunDistance) && longRunDistance > 0) {
+        for (let j = startIndex; j <= endIndex; j += 1) {
+          const day = plan[j];
+          if (day.workoutType !== "run" || j === keepIndex) continue;
+          if (day.runDistanceMi > longRunDistance) {
+            setRunDistance(day, longRunDistance);
+          }
+        }
+      }
+    }
+  }
+
+  const longRunIndices = plan
+    .map((day, index) => (isLongRunDay(day) ? index : -1))
+    .filter((index) => index >= 0);
+
+  for (let i = 0; i < plan.length; i += 1) {
+    const day = plan[i];
+    if (!isThresholdDay(day)) continue;
+    if (longRunIndices.length === 0) {
+      setRunEasy(day, day.runDistanceMi);
+      continue;
+    }
+    const thresholdDistance = day.runDistanceMi;
+    const nearestLongRunIndex = longRunIndices.reduce((closest, index) => {
+      const currentDistance = Math.abs(index - i);
+      const bestDistance = Math.abs(closest - i);
+      return currentDistance < bestDistance ? index : closest;
+    }, longRunIndices[0]);
+    const nearestLongRunDistance = plan[nearestLongRunIndex].runDistanceMi;
+    const allowedDistance = nearestLongRunDistance * 0.6;
+    if (!Number.isFinite(allowedDistance) || allowedDistance <= 0) {
+      setRunEasy(day, thresholdDistance);
+      continue;
+    }
+    if (thresholdDistance > allowedDistance) {
+      setRunDistance(day, allowedDistance);
+    }
+  }
+
+  for (let endIndex = 0; endIndex < plan.length; endIndex += 1) {
+    const startIndex = Math.max(0, endIndex - 6);
+    const window = plan.slice(startIndex, endIndex + 1);
+    const phase = plan[endIndex].phase;
+    const maxQuality = qualityMaxForPhase(phase);
+    const qualityIndices = window
+      .map((day, offset) => (day.isQualityDay ? startIndex + offset : -1))
+      .filter((index) => index >= 0);
+
+    if (qualityIndices.length <= maxQuality) continue;
+
+    const sorted = qualityIndices
+      .map((index) => {
+        const day = plan[index];
+        let priority = 4;
+        if (day.workoutType === "peloton") priority = 0;
+        if (isIntervalsDay(day)) priority = 1;
+        if (isThresholdDay(day)) priority = 2;
+        if (isLongRunDay(day)) priority = 3;
+        return { index, priority };
+      })
+      .sort((a, b) => a.priority - b.priority || a.index - b.index);
+
+    let qualityCount = qualityIndices.length;
+    for (const { index } of sorted) {
+      if (qualityCount <= maxQuality) break;
+      const day = plan[index];
+      if (!day.isQualityDay) continue;
+      if (day.workoutType === "peloton") {
+        downgradePelotonToEasy(day);
+      } else if (day.workoutType === "run") {
+        setRunEasy(day, day.runDistanceMi);
+      }
+      qualityCount -= 1;
+    }
+  }
+}
+
 /* ---------------- main ---------------- */
 
 export function generatePlan({
@@ -133,10 +304,6 @@ export function generatePlan({
   const raceWeekIndex = Math.floor(raceIndex / 7);
 
   const plan: PlanDay[] = [];
-
-  const EASY_PACE = "9:35 / mi–10:23 / mi";
-  const THRESHOLD_PACE = "8:29 / mi–8:41 / mi";
-  const INTERVAL_PACE = "8:05 / mi–8:17 / mi";
 
   const downgradeDayToEasy = (
     day: PlanDay,
@@ -577,6 +744,8 @@ export function generatePlan({
 
     prevQualityDay = isQualityDay;
   }
+
+  enforceJDRules(plan, raceDate);
 
   return plan;
 }
