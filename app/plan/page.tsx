@@ -6,9 +6,8 @@ import type { PlanDay } from "@/lib/training/generatePlan";
 
 const RACE_DATE = "2026-05-24";
 
-const HERO_IMAGE_SRC =
-  "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=1600&q=80";
-const HERO_IMAGE_ALT = "Calm mountain landscape with soft blue sky";
+const HERO_IMAGE_SRC = "/training-calendar-hero.jpg";
+const HERO_IMAGE_ALT = "Training calendar hero";
 
 function todayYYYYMMDD() {
   const d = new Date();
