@@ -17,10 +17,17 @@ function todayYYYYMMDD() {
 /* ---------- UI helpers ---------- */
 
 const WORKOUT_COLORS: Record<string, string> = {
-  run: "#d1fae5",
-  peloton: "#bae6fd",
-  strength: "#e9d5ff",
-  rest: "#e5e7eb",
+  run: "#e0ecff",
+  peloton: "#daf5e9",
+  strength: "#efe5ff",
+  rest: "#f3f4f6",
+};
+
+const WORKOUT_TEXT_COLORS: Record<string, string> = {
+  run: "#0b3b8a",
+  peloton: "#1a6b43",
+  strength: "#553c9a",
+  rest: "#374151",
 };
 
 const WORKOUT_LABELS: Record<string, string> = {
@@ -30,9 +37,20 @@ const WORKOUT_LABELS: Record<string, string> = {
   rest: "Rest",
 };
 
+function formatFriendlyDate(dateString: string | null | undefined) {
+  if (!dateString) return "";
+  const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) return dateString;
+  return date.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).replace(",", " ·");
+}
+
 function workoutLabel(day: PlanDay) {
   if (day.workoutType === "peloton") {
-    return day.pelotonType === "quality" ? "Peloton Quality" : "Peloton Easy";
+    return day.pelotonType === "quality" ? "Peloton" : "Peloton";
   }
   return WORKOUT_LABELS[day.workoutType] ?? day.workoutType;
 }
@@ -41,14 +59,27 @@ function WorkoutPill({ day }: { day: PlanDay }) {
   return (
     <span
       style={{
-        padding: "4px 8px",
-        borderRadius: 12,
-        fontSize: 12,
-        fontWeight: 600,
+        padding: "6px 10px",
+        borderRadius: 999,
+        fontSize: 13,
+        fontWeight: 700,
         background: WORKOUT_COLORS[day.workoutType] ?? "#eee",
+        color: WORKOUT_TEXT_COLORS[day.workoutType] ?? "#111827",
         whiteSpace: "nowrap",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
       }}
     >
+      <span
+        style={{
+          width: 8,
+          height: 8,
+          borderRadius: 999,
+          background: WORKOUT_TEXT_COLORS[day.workoutType] ?? "#111827",
+          display: "inline-block",
+        }}
+      />
       {workoutLabel(day)}
     </span>
   );
@@ -157,46 +188,57 @@ function buildPlanStats(plan: PlanDay[], starting10DayLoad: number): PlanStats {
   };
 }
 
+function formatSegmentDetail(segment: any) {
+  const parts: string[] = [];
+  if (segment.label) parts.push(segment.label);
+  if (Number.isFinite(segment.distanceMi)) {
+    parts.push(`${segment.distanceMi.toFixed(1)} mi`);
+  }
+  if (segment.pace) {
+    parts.push(`@ ${segment.pace}`);
+  }
+  if (segment.durationMin) {
+    parts.push(`${segment.durationMin} min`);
+  }
+  return parts.join(" · ");
+}
+
 function WorkoutDetails({ day }: { day: PlanDay }) {
   const segments = Array.isArray(day.segments) ? day.segments : [];
   const workoutType = day.workoutType;
   const totalRunMiles = sumSegmentMiles(segments);
   const pelotonEq = safeNumber(day.pelotonLoadEq);
 
+  if (workoutType === "rest") {
+    return <span style={{ color: "#6b7280" }}>Rest day</span>;
+  }
+
+  if (workoutType === "peloton") {
+    return (
+      <span>
+        {day.pelotonType === "quality" ? "Quality ride" : "Easy ride"} · Peloton
+        {pelotonEq > 0 ? ` · Load ${pelotonEq.toFixed(1)} mi-eq` : ""}
+      </span>
+    );
+  }
+
+  if (workoutType === "strength") {
+    return <span>Strength session</span>;
+  }
+
+  if (segments.length === 0) {
+    return <span>Run</span>;
+  }
+
   return (
-    <div>
-      <div style={{ fontWeight: 600, marginBottom: 4 }}>
-        {day.isQualityDay ? "Quality day" : "Non-quality day"}
-      </div>
-      {/* Run total */}
-      {workoutType === "run" && totalRunMiles > 0 && (
-        <div style={{ fontWeight: 600, marginBottom: 4 }}>
-          Total: {totalRunMiles.toFixed(1)} mi
-        </div>
-      )}
-
-      {/* Peloton load */}
-      {workoutType === "peloton" && pelotonEq > 0 && (
-        <div style={{ fontWeight: 600, marginBottom: 4 }}>
-          {day.pelotonType === "quality" ? "Quality" : "Easy"} · Load:{" "}
-          {pelotonEq.toFixed(1)} mi-eq
-        </div>
-      )}
-
-      {/* Segment breakdown */}
-      {segments.length > 0 && (
-        <ul style={{ paddingLeft: 16, margin: 0 }}>
-          {segments.map((s: any, idx: number) => (
-            <li key={idx} style={{ lineHeight: 1.4 }}>
-              {s.label}
-              {Number.isFinite(s.distanceMi) && ` — ${s.distanceMi} mi`}
-              {s.durationMin && ` — ${s.durationMin} min`}
-              {s.pace && ` @ ${s.pace}`}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+    <span>
+      {segments
+        .map((s: any) => formatSegmentDetail(s))
+        .filter(Boolean)
+        .join(" | ")}
+      {totalRunMiles > 0 && !segments.some((s: any) => s.distanceMi === totalRunMiles) ?
+        ` · ${totalRunMiles.toFixed(1)} mi total` : ""}
+    </span>
   );
 }
 
@@ -250,39 +292,61 @@ export default function PlanPage() {
   const phaseRanges = stats?.phaseRanges ?? null;
 
   return (
-    <main style={{ padding: 24, maxWidth: 1400 }}>
-      <h1 style={{ fontSize: 24, fontWeight: 700 }}>Training Plan Generator</h1>
+    <main
+      style={{
+        padding: 24,
+        maxWidth: 1400,
+        margin: "0 auto",
+        color: "#0f172a",
+        background: "#f8fafc",
+        minHeight: "100vh",
+        fontFamily: "Inter, system-ui, -apple-system, sans-serif",
+      }}
+    >
+      <h1 style={{ fontSize: 26, fontWeight: 800, marginBottom: 4 }}>Training Plan</h1>
 
-      <p style={{ marginTop: 8 }}>
+      <p style={{ marginTop: 4, color: "#475569", lineHeight: 1.6 }}>
         Race day: <strong>{RACE_DATE}</strong> (8-mile event)
         <br />
-        <strong>Runs are never scheduled on workdays.</strong>
-        <br />
-        Peloton contributes <em>miles-equivalent</em> load so total stress is realistic.
+        Runs avoid workdays; Peloton contributes <em>mile-equivalent</em> load so total stress stays realistic.
       </p>
 
       {/* Overview */}
       <div
         style={{
-          marginTop: 12,
-          padding: 12,
-          border: "1px solid #e5e7eb",
-          borderRadius: 8,
-          background: "#fafafa",
+          marginTop: 16,
+          padding: 14,
+          border: "1px solid #e2e8f0",
+          borderRadius: 12,
+          background: "#fff",
+          boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)",
         }}
       >
-        <div style={{ fontWeight: 700, marginBottom: 6 }}>Plan Overview</div>
-        <div style={{ lineHeight: 1.6 }}>
-          <div>
-            <strong>Starting 10-day load:</strong> {starting10DayLoad} mi-eq
-            {"  "}·{"  "}
-            <strong>Target peak 10-day load:</strong> {targetPeak10DayLoad} mi-eq
+        <div style={{ fontWeight: 700, marginBottom: 8, fontSize: 16 }}>Plan Overview</div>
+        <div style={{ lineHeight: 1.6, color: "#334155" }}>
+          <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: 0.6, color: "#94a3b8" }}>
+                Starting 10-day load
+              </div>
+              <div style={{ fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                {starting10DayLoad} mi-eq
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: 0.6, color: "#94a3b8" }}>
+                Target peak load
+              </div>
+              <div style={{ fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                {targetPeak10DayLoad} mi-eq
+              </div>
+            </div>
           </div>
-          <div>
-            <strong>Rules:</strong> No run on workdays · Strength ~1×/week on workdays · Rest 1–2×/week
+          <div style={{ marginTop: 8 }}>
+            <strong>Guiding rules:</strong> No run on workdays · Strength ~1×/week on workdays · Rest 1–2×/week
           </div>
           {phaseRanges && (
-            <div style={{ marginTop: 6 }}>
+            <div style={{ marginTop: 8 }}>
               <strong>Phases (race-anchored):</strong>
               <ul style={{ margin: "6px 0 0 18px" }}>
                 {["BASE", "BUILD", "PEAK", "TAPER"].map((ph) => (
@@ -350,9 +414,13 @@ export default function PlanPage() {
         style={{
           marginTop: 14,
           padding: "10px 14px",
-          borderRadius: 6,
-          border: "1px solid #333",
+          borderRadius: 8,
+          border: "1px solid #0ea5e9",
           cursor: "pointer",
+          background: "linear-gradient(120deg, #0ea5e9, #22d3ee)",
+          color: "#f8fafc",
+          fontWeight: 700,
+          boxShadow: "0 10px 30px rgba(14, 165, 233, 0.25)",
         }}
       >
         Generate plan to {RACE_DATE}
@@ -375,7 +443,7 @@ export default function PlanPage() {
         <div style={{ marginTop: 28 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
             <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Training Plan</h2>
-            <div style={{ fontSize: 13, color: "#374151" }}>
+            <div style={{ fontSize: 13, color: "#475569" }}>
               Runs on workdays: <strong>{stats.runOnWorkdayCount}</strong>{" "}
               · Max run streak: <strong>{stats.maxRunStreak}</strong>
             </div>
@@ -384,46 +452,124 @@ export default function PlanPage() {
           <div style={{ overflowX: "auto", marginTop: 12 }}>
             <table
               style={{
-                borderCollapse: "collapse",
+                borderCollapse: "separate",
+                borderSpacing: 0,
                 width: "100%",
                 fontSize: 14,
+                background: "#fff",
+                borderRadius: 12,
+                boxShadow: "0 14px 40px rgba(15, 23, 42, 0.08)",
+                overflow: "hidden",
               }}
             >
               <thead>
-                <tr style={{ background: "#f3f4f6" }}>
-                  <th style={{ padding: 8, textAlign: "left" }}>Date</th>
-                  <th style={{ padding: 8 }}>Work?</th>
-                  <th style={{ padding: 8 }}>Phase</th>
-                  <th style={{ padding: 8 }}>Workout</th>
-                  <th style={{ padding: 8, textAlign: "left" }}>Details</th>
-                  <th style={{ padding: 8, textAlign: "right" }}>10-Day Total (mi-eq)</th>
+                <tr style={{ background: "#f8fafc", color: "#475569", textTransform: "uppercase", letterSpacing: 0.4, fontSize: 12 }}>
+                  <th style={{ padding: "10px 12px", textAlign: "left", width: 110 }}>Phase</th>
+                  <th style={{ padding: "10px 12px", textAlign: "left", width: 150 }}>Date</th>
+                  <th style={{ padding: "10px 12px", textAlign: "center", width: 80 }}>Work</th>
+                  <th style={{ padding: "10px 12px", textAlign: "left", width: 140 }}>Workout</th>
+                  <th style={{ padding: "10px 12px", textAlign: "center", width: 90 }}>Quality</th>
+                  <th style={{ padding: "10px 12px", textAlign: "left" }}>Details</th>
+                  <th style={{ padding: "10px 12px", textAlign: "right", width: 110 }}>Total Miles</th>
+                  <th style={{ padding: "10px 12px", textAlign: "right", width: 130 }}>10-Day Load</th>
                 </tr>
               </thead>
               <tbody>
-                {plan.map((d: PlanDay, idx: number) => (
-                  <tr key={d.date ?? idx} style={{ borderBottom: "1px solid #eee" }}>
-                    <td style={{ padding: 8 }}>{d.date}</td>
-                    <td style={{ padding: 8 }}>{d.isWorkday ? "Yes" : ""}</td>
-                    <td style={{ padding: 8 }}>{d.phase}</td>
-                    <td style={{ padding: 8 }}>
-                      <WorkoutPill day={d} />
-                    </td>
-                    <td style={{ padding: 8 }}>
-                      <WorkoutDetails day={d} />
-                    </td>
-                    <td
-                      style={{
-                        padding: 8,
-                        textAlign: "right",
-                        fontVariantNumeric: "tabular-nums",
-                      }}
-                    >
-                      {stats.rolling10DayTotalEq[idx] !== undefined
-                        ? stats.rolling10DayTotalEq[idx].toFixed(1)
-                        : "—"}
-                    </td>
-                  </tr>
-                ))}
+                {plan.map((d: PlanDay, idx: number) => {
+                  const loadValue = stats.rolling10DayTotalEq[idx];
+                  const loadPct = targetPeak10DayLoad
+                    ? Math.min(1, Math.max(0, loadValue / targetPeak10DayLoad))
+                    : 0;
+                  const workoutMiles = (() => {
+                    if (d.workoutType === "run") return d.runDistanceMi || sumSegmentMiles(d.segments || []);
+                    if (d.workoutType === "peloton") return safeNumber(d.pelotonLoadEq);
+                    if (d.workoutType === "strength") return 0;
+                    return 0;
+                  })();
+                  const qualityLabel = d.workoutType === "rest" ? "—" : d.isQualityDay ? "Quality" : "Easy";
+
+                  return (
+                    <tr key={d.date ?? idx} style={{ borderBottom: "1px solid #e2e8f0" }}>
+                      <td style={{ padding: "12px", color: "#475569", verticalAlign: "top" }}>
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            padding: "4px 10px",
+                            borderRadius: 999,
+                            background: "#eef2ff",
+                            color: "#4338ca",
+                            fontSize: 12,
+                            fontWeight: 700,
+                            letterSpacing: 0.4,
+                          }}
+                        >
+                          {d.phase}
+                        </span>
+                      </td>
+                      <td style={{ padding: "12px", fontWeight: 800, color: "#0f172a", verticalAlign: "top" }}>
+                        {formatFriendlyDate(d.date)}
+                      </td>
+                      <td style={{ padding: "12px", textAlign: "center", verticalAlign: "top", fontSize: 16 }}>
+                        {d.isWorkday ? "🧑‍💻" : "—"}
+                      </td>
+                      <td style={{ padding: "12px", verticalAlign: "top" }}>
+                        <WorkoutPill day={d} />
+                      </td>
+                      <td style={{ padding: "12px", textAlign: "center", color: qualityLabel === "Quality" ? "#b45309" : "#475569", verticalAlign: "top", fontWeight: 700 }}>
+                        {qualityLabel}
+                      </td>
+                      <td style={{ padding: "12px", lineHeight: 1.5, color: "#0f172a" }}>
+                        <WorkoutDetails day={d} />
+                      </td>
+                      <td
+                        style={{
+                          padding: "12px",
+                          textAlign: "right",
+                          fontVariantNumeric: "tabular-nums",
+                          color: "#0f172a",
+                          verticalAlign: "top",
+                          fontWeight: 700,
+                        }}
+                      >
+                        {d.workoutType === "rest" ? "0" : workoutMiles.toFixed(1)}
+                      </td>
+                      <td
+                        style={{
+                          padding: "12px",
+                          textAlign: "right",
+                          fontVariantNumeric: "tabular-nums",
+                          color: "#475569",
+                          verticalAlign: "top",
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
+                          <div style={{ fontWeight: 700 }}>
+                            {loadValue !== undefined ? loadValue.toFixed(1) : "—"}
+                          </div>
+                          <div
+                            aria-hidden
+                            style={{
+                              width: 70,
+                              height: 6,
+                              background: "#e2e8f0",
+                              borderRadius: 999,
+                              overflow: "hidden",
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: `${(loadPct * 100).toFixed(0)}%`,
+                                height: "100%",
+                                background: "linear-gradient(90deg, #0ea5e9, #22d3ee)",
+                                transition: "width 0.3s ease",
+                              }}
+                            />
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -432,7 +578,7 @@ export default function PlanPage() {
           <div style={{ marginTop: 16 }}>
             <details>
               <summary style={{ cursor: "pointer" }}>Workout counts</summary>
-              <pre style={{ marginTop: 10, padding: 12, background: "#f6f6f6", borderRadius: 6 }}>
+              <pre style={{ marginTop: 10, padding: 12, background: "#f8fafc", borderRadius: 6 }}>
                 {JSON.stringify(stats.counts, null, 2)}
               </pre>
             </details>
