@@ -6,6 +6,10 @@ import type { PlanDay } from "@/lib/training/generatePlan";
 
 const RACE_DATE = "2026-05-24";
 
+const HERO_IMAGE_SRC =
+  "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=1600&q=80";
+const HERO_IMAGE_ALT = "Calm mountain landscape with soft blue sky";
+
 function todayYYYYMMDD() {
   const d = new Date();
   const y = d.getFullYear();
@@ -310,6 +314,49 @@ export default function PlanPage() {
         <br />
         Runs avoid workdays; Peloton contributes <em>mile-equivalent</em> load so total stress stays realistic.
       </p>
+
+      <div
+        style={{
+          position: "relative",
+          width: "100%",
+          height: "clamp(180px, 26vw, 260px)",
+          marginTop: 20,
+          borderRadius: 16,
+          overflow: "hidden",
+          boxShadow: "0 10px 28px rgba(15, 23, 42, 0.12)",
+          background: "#0f172a",
+        }}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={HERO_IMAGE_SRC}
+          alt={HERO_IMAGE_ALT}
+          loading="eager"
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            display: "block",
+          }}
+        />
+        <div
+          aria-hidden
+          style={{
+            position: "absolute",
+            inset: 0,
+            background: "radial-gradient(circle at 50% 30%, transparent 45%, rgba(15, 23, 42, 0.06) 100%)",
+            boxShadow: "inset 0 0 0 1px rgba(15, 23, 42, 0.04)",
+          }}
+        />
+        <div
+          aria-hidden
+          style={{
+            position: "absolute",
+            inset: 0,
+            background: "rgba(15, 23, 42, 0.06)",
+          }}
+        />
+      </div>
 
       {/* Overview */}
       <div
